@@ -381,7 +381,74 @@ loc 表的来源规则：
 - 增加与官方 `yolov5s_origin.mlir` 的差异对比工具
 - 增加 shape 推断失败时的容错策略
 
-## 11. 一句话总结
+## 11. 类 / 函数职责速查表
+
+下面这张表用于把文档和代码快速对齐，方便阅读 [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 时快速定位职责。
+
+| 名称 | 类型 | 主要职责 |
+| --- | --- | --- |
+| `parse_args()` | 函数 | 解析命令行参数，建立模型路径、输出路径、输入 shape、输出节点、预处理配置。 |
+| `main()` | 函数 | 脚本入口。创建 importer，执行转换，写出 `.mlir` 与 `.npz`。 |
+| `import_onnx()` | 函数 | 延迟导入 `onnx` 相关模块，避免在环境未激活时脚本直接崩溃。 |
+| `sanitize_symbol()` | 函数 | 将 ONNX 名称清洗成适合做权重 key 的安全字符串。 |
+| `parse_input_shapes()` | 函数 | 解析 `[[1,3,640,640]]` 这类输入 shape 文本。 |
+| `tensor_type()` | 函数 | 将 shape 和 dtype 转为 MLIR tensor type 文本。 |
+| `mlir_element_type()` | 函数 | 将 numpy dtype 映射为 MLIR 元素类型字符串。 |
+| `ValueRef` | 数据类 | 表示一个已进入 MLIR 世界的值，保存 SSA 名、类型、shape、dtype、ONNX 名。 |
+| `MlirBuilder` | 类 | 负责构造 MLIR 文本、分配 SSA 名、管理权重输出和 loc 表。 |
+| `MlirBuilder.new_value()` | 方法 | 为新结果分配一个新的 `%N` SSA 名。 |
+| `MlirBuilder.create_input()` | 方法 | 发射 `top.Input` 文本。 |
+| `MlirBuilder.create_weight()` | 方法 | 发射 `top.Weight` 文本并收集权重到 `weight_map`。 |
+| `MlirBuilder.create_op()` | 方法 | 发射通用 `top.*` op 文本。 |
+| `MlirBuilder.loc_ref()` | 方法 | 为某个节点名分配 `#locN` 别名。 |
+| `MlirBuilder.loc_definitions()` | 方法 | 在文件末尾生成 `#locN = loc("...")` 列表。 |
+| `OnnxToTopImporter` | 类 | 整个 importer 的控制中心，负责 ONNX 图解析、子图裁剪、节点分发与输出构建。 |
+| `OnnxToTopImporter.load_model()` | 方法 | 加载 ONNX 模型并尝试执行 shape inference。 |
+| `OnnxToTopImporter.collect_value_info()` | 方法 | 收集中间 value 的 shape 和 dtype 信息。 |
+| `OnnxToTopImporter.output_names()` | 方法 | 解析用户指定的目标输出列表。 |
+| `OnnxToTopImporter.graph_inputs()` | 方法 | 过滤出真实图输入，并应用输入 shape 覆盖。 |
+| `OnnxToTopImporter.selected_nodes()` | 方法 | 从目标输出反向追依赖并做拓扑排序，得到最小必需子图。 |
+| `OnnxToTopImporter.ensure_operand()` | 方法 | 将一个 ONNX value 映射为现有 `ValueRef`，必要时自动物化常量权重。 |
+| `OnnxToTopImporter.constant_array()` | 方法 | 读取某个已知常量 value 的 numpy 数组。 |
+| `OnnxToTopImporter.is_constant_value()` | 方法 | 判断某个 value 当前是否可被视为常量。 |
+| `OnnxToTopImporter.materialize_const_output()` | 方法 | 把常量折叠结果写成 `top.Weight` 并加入常量表。 |
+| `OnnxToTopImporter.node_loc_name()` | 方法 | 为某个 ONNX 节点选择 loc 名称来源。 |
+| `OnnxToTopImporter.convert_node()` | 方法 | 节点分发器，根据 `op_type` 调用对应 `emit_*()`。 |
+| `OnnxToTopImporter.build()` | 方法 | 组织完整模块文本，生成 `module`、`func.func`、主体 op、返回值和 loc 表。 |
+| `emit_conv()` | 方法 | 将 ONNX `Conv` 转成 `top.Conv`。 |
+| `emit_sigmoid()` | 方法 | 将 ONNX `Sigmoid` 转成 `top.Sigmoid`，必要时做常量折叠。 |
+| `emit_binary()` | 方法 | 统一处理 `Mul` 和 `Add`，必要时做常量折叠。 |
+| `emit_concat()` | 方法 | 将 ONNX `Concat` 转成 `top.Concat`，常量输入时直接拼接。 |
+| `emit_maxpool()` | 方法 | 将 ONNX `MaxPool` 转成 `top.MaxPool`。 |
+| `emit_resize()` | 方法 | 将 ONNX `Resize` 转成 `top.Interp`。 |
+| `emit_reshape()` | 方法 | 将 ONNX `Reshape` 转成 `top.Reshape`，常量输入时直接 reshape。 |
+| `emit_transpose()` | 方法 | 将 ONNX `Transpose` 转成 `top.Permute`，常量输入时直接转置。 |
+| `emit_slice()` | 方法 | 将 ONNX `Slice` 转成 `top.Slice`，常量输入时直接切片。 |
+| `emit_shape()` | 方法 | 将 ONNX `Shape` 直接折叠成常量 shape tensor。 |
+| `emit_gather()` | 方法 | 将 ONNX `Gather` 在常量域中直接求值。 |
+| `emit_unsqueeze()` | 方法 | 将 ONNX `Unsqueeze` 在常量域中直接求值。 |
+| `emit_cast()` | 方法 | 将 ONNX `Cast` 在常量域中直接求值。 |
+| `emit_range()` | 方法 | 将 ONNX `Range` 在常量域中直接求值。 |
+| `emit_expand()` | 方法 | 将 ONNX `Expand` 在常量域中直接求值。 |
+| `emit_constant_of_shape()` | 方法 | 将 ONNX `ConstantOfShape` 直接折叠为常量张量。 |
+| `emit_identity()` | 方法 | 直接复用输入 `ValueRef`，不额外发射 op。 |
+| `materialize_constant_node()` | 方法 | 将 ONNX `Constant` 节点物化为 `top.Weight`。 |
+
+### 11.1 阅读顺序建议
+
+如果是第一次阅读代码，建议按下面顺序看：
+
+1. `main()`
+2. `parse_args()`
+3. `OnnxToTopImporter.build()`
+4. `selected_nodes()`
+5. `convert_node()`
+6. `emit_conv()`、`emit_concat()`、`emit_resize()` 等核心 `emit_*()`
+7. `MlirBuilder.create_op()`、`create_weight()`、`loc_ref()`
+
+这个顺序比较符合“从整体流程到局部实现”的理解路径。
+
+## 12. 一句话总结
 
 [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 的本质是：
 
