@@ -197,6 +197,24 @@ def parse_resize_dims(text: str, fallback_shape: list[int] | None) -> list[int]:
     return []
 
 
+def _dim_known(dim: int | None) -> bool:
+    return dim is not None and dim >= 0
+
+
+def _conv_out_dim(
+    input_dim: int | None,
+    kernel: int,
+    stride: int,
+    pad_before: int,
+    pad_after: int,
+    dilation: int,
+) -> int | None:
+    if not _dim_known(input_dim):
+        return None
+    effective_kernel = dilation * (kernel - 1) + 1
+    return ((int(input_dim) + int(pad_before) + int(pad_after) - effective_kernel) // int(stride)) + 1
+
+
 @dataclass
 class ValueRef:
     name: str
@@ -257,7 +275,7 @@ class MlirBuilder:
     def ensure_none(self) -> ValueRef:
         if self.none_value is None:
             self.none_value = ValueRef("%0", "none", None, np.float32, "__none__")
-            self.emit(f'%0 = "top.None"() : () -> none loc({self.loc_ref("none")})')
+            self.emit('%0 = "top.None"() : () -> none loc(#loc)')
         return self.none_value
 
     def create_input(self, arg_name: str, arg_type: str, shape: list[int], loc_name: str) -> ValueRef:
@@ -447,6 +465,106 @@ class OnnxToTopImporter:
     def dtype_of(self, name: str) -> np.dtype:
         return self.value_info.get(name, (None, np.float32))[1]
 
+    def set_value_info(self, name: str, shape: list[int] | None, dtype: np.dtype | None = None) -> None:
+        cur_shape, cur_dtype = self.value_info.get(name, (None, np.float32))
+        self.value_info[name] = (shape if shape is not None else cur_shape, np.dtype(dtype) if dtype is not None else cur_dtype)
+
+    def infer_conv_shape(
+        self,
+        input_shape: list[int] | None,
+        weight_shape: list[int] | None,
+        pads: list[int],
+        strides: list[int],
+        dilations: list[int],
+        group: int,
+    ) -> list[int] | None:
+        if not input_shape or not weight_shape or len(input_shape) < 4 or len(weight_shape) < 4:
+            return None
+        n = input_shape[0]
+        out_c = weight_shape[0]
+        h = _conv_out_dim(input_shape[2], weight_shape[2], strides[0], pads[0], pads[2], dilations[0])
+        w = _conv_out_dim(input_shape[3], weight_shape[3], strides[1], pads[1], pads[3], dilations[1])
+        return [n, out_c, h, w]
+
+    def infer_concat_shape(self, input_shapes: list[list[int] | None], axis: int) -> list[int] | None:
+        known = [shape for shape in input_shapes if shape is not None]
+        if not known:
+            return None
+        rank = len(known[0])
+        if any(len(shape) != rank for shape in known):
+            return None
+        if axis < 0:
+            axis += rank
+        out = list(known[0])
+        for dim_index in range(rank):
+            if dim_index == axis:
+                total = 0
+                for shape in input_shapes:
+                    if shape is None or not _dim_known(shape[dim_index]):
+                        total = None
+                        break
+                    total += int(shape[dim_index])
+                out[dim_index] = total
+            else:
+                dim = out[dim_index]
+                for shape in input_shapes[1:]:
+                    if shape is None:
+                        dim = None
+                        break
+                    other = shape[dim_index]
+                    if _dim_known(dim) and _dim_known(other) and int(dim) != int(other):
+                        dim = None
+                        break
+                    if not _dim_known(dim):
+                        dim = other if _dim_known(other) else None
+                out[dim_index] = dim
+        return out
+
+    def infer_interp_shape(
+        self,
+        input_shape: list[int] | None,
+        scales: np.ndarray | None,
+        sizes: np.ndarray | None = None,
+    ) -> list[int] | None:
+        if not input_shape:
+            return None
+        if sizes is not None and len(sizes) == len(input_shape):
+            return [int(v) for v in sizes.tolist()]
+        if scales is None or len(scales) != len(input_shape):
+            return None
+        out = []
+        for dim, scale in zip(input_shape, scales.tolist()):
+            if not _dim_known(dim):
+                out.append(None)
+            else:
+                out.append(int(round(float(dim) * float(scale))))
+        return out
+
+    def infer_reshape_shape(self, input_shape: list[int] | None, target_shape: list[int]) -> list[int]:
+        out = list(target_shape)
+        known_product = 1
+        unknown_index = None
+        for idx, dim in enumerate(out):
+            if dim == 0 and input_shape and idx < len(input_shape):
+                out[idx] = input_shape[idx]
+                dim = out[idx]
+            if dim == -1:
+                unknown_index = idx
+            elif _dim_known(dim):
+                known_product *= int(dim)
+        if unknown_index is not None and input_shape and all(_dim_known(dim) for dim in input_shape):
+            input_product = 1
+            for dim in input_shape:
+                input_product *= int(dim)
+            if known_product != 0:
+                out[unknown_index] = input_product // known_product
+        return out
+
+    def infer_transpose_shape(self, input_shape: list[int] | None, perm: list[int]) -> list[int] | None:
+        if not input_shape or len(input_shape) != len(perm):
+            return None
+        return [input_shape[idx] for idx in perm]
+
     def attr_dict(self, node) -> dict[str, Any]:
         attrs = {}
         for attr in node.attribute:
@@ -585,6 +703,8 @@ class OnnxToTopImporter:
             )
             return
         inp = self.ensure_operand(node.input[0])
+        out_shape = inp.shape
+        self.set_value_info(node.output[0], out_shape, inp.dtype)
         out = self.builder.create_op(
             "top.Sigmoid",
             [inp],
@@ -595,8 +715,8 @@ class OnnxToTopImporter:
                 "scale": "1.0 : f64",
             },
             node.output[0],
-            self.shape_of(node.output[0]),
-            self.dtype_of(node.output[0]),
+            out_shape,
+            inp.dtype,
             loc_name=self.node_loc_name(node, default_output=node.output[0]),
         )
         self.builder.value_map[node.output[0]] = out
@@ -616,6 +736,9 @@ class OnnxToTopImporter:
         lhs = self.ensure_operand(node.input[0])
         rhs = self.ensure_operand(node.input[1])
         is_scalar = "true" if (rhs.shape == [] or rhs.shape == [1] or lhs.shape == [] or lhs.shape == [1]) else "false"
+        out_shape = lhs.shape if lhs.shape is not None else rhs.shape
+        out_dtype = np.result_type(lhs.dtype, rhs.dtype)
+        self.set_value_info(node.output[0], out_shape, out_dtype)
         out = self.builder.create_op(
             op_name,
             [lhs, rhs],
@@ -625,8 +748,8 @@ class OnnxToTopImporter:
                 "relu_limit": "-1.0 : f64",
             },
             node.output[0],
-            self.shape_of(node.output[0]),
-            self.dtype_of(node.output[0]),
+            out_shape,
+            out_dtype,
             loc_name=self.node_loc_name(node, default_output=node.output[0]),
         )
         self.builder.value_map[node.output[0]] = out
@@ -639,6 +762,8 @@ class OnnxToTopImporter:
             self.materialize_const_output(node.output[0], result, loc_name=self.node_loc_name(node, default_output=node.output[0]))
             return
         ops = [self.ensure_operand(name) for name in node.input]
+        out_shape = self.infer_concat_shape([op.shape for op in ops], int(attrs.get("axis", 1)))
+        self.set_value_info(node.output[0], out_shape)
         out = self.builder.create_op(
             "top.Concat",
             ops,
@@ -650,7 +775,7 @@ class OnnxToTopImporter:
                 "round_mode": f'"{ROUND_MODE}"',
             },
             node.output[0],
-            self.shape_of(node.output[0]),
+            out_shape,
             self.dtype_of(node.output[0]),
             loc_name=self.node_loc_name(node, default_output=node.output[0]),
         )
@@ -671,6 +796,10 @@ class OnnxToTopImporter:
         strides = [int(v) for v in attrs.get("strides", [1, 1])]
         dilations = [int(v) for v in attrs.get("dilations", [1, 1])]
         kernel_shape = [int(v) for v in attrs.get("kernel_shape", weight_shape[-2:])]
+        out_shape = self.infer_conv_shape(
+            data.shape, weight_shape, pads, strides, dilations, int(attrs.get("group", 1))
+        )
+        self.set_value_info(node.output[0], out_shape)
         out = self.builder.create_op(
             "top.Conv",
             [data, weight, bias],
@@ -687,7 +816,7 @@ class OnnxToTopImporter:
                 "weight_is_coeff": "1 : i64",
             },
             node.output[0],
-            self.shape_of(node.output[0]),
+            out_shape,
             self.dtype_of(node.output[0]),
             loc_name=self.node_loc_name(node, default_output=node.output[0]),
         )
@@ -726,6 +855,7 @@ class OnnxToTopImporter:
         inp = self.ensure_operand(node.input[0])
         none_value = self.builder.ensure_none()
         scales = None
+        sizes = None
         if len(node.input) >= 3 and node.input[2]:
             scales = self.constant_array(node.input[2]).astype(np.float64)
         if scales is None and len(node.input) >= 4 and node.input[3]:
@@ -735,6 +865,8 @@ class OnnxToTopImporter:
                 scales = sizes / np.asarray(input_shape, dtype=np.float64)
         if scales is None or len(scales) < 2:
             raise SystemExit(f"Resize node requires constant scales or sizes: {node.name or node.output[0]}")
+        out_shape = self.infer_interp_shape(inp.shape, scales, sizes=sizes)
+        self.set_value_info(node.output[0], out_shape)
         out = self.builder.create_op(
             "top.Interp",
             [inp, none_value],
@@ -745,7 +877,7 @@ class OnnxToTopImporter:
                 "scale_w": f"{float(scales[-1])} : f64",
             },
             node.output[0],
-            self.shape_of(node.output[0]),
+            out_shape,
             self.dtype_of(node.output[0]),
             loc_name=self.node_loc_name(node, default_output=node.output[0]),
         )
@@ -761,6 +893,8 @@ class OnnxToTopImporter:
         inp = self.ensure_operand(node.input[0])
         shape_name = node.input[1]
         target_shape = [int(v) for v in self.constant_array(shape_name).tolist()]
+        out_shape = self.infer_reshape_shape(inp.shape, target_shape)
+        self.set_value_info(node.output[0], out_shape)
         out = self.builder.create_op(
             "top.Reshape",
             [inp],
@@ -769,7 +903,7 @@ class OnnxToTopImporter:
                 "shape": to_int_array(target_shape),
             },
             node.output[0],
-            self.shape_of(node.output[0]),
+            out_shape,
             self.dtype_of(node.output[0]),
             loc_name=self.node_loc_name(node, default_output=node.output[0]),
         )
@@ -785,12 +919,14 @@ class OnnxToTopImporter:
             return
         inp = self.ensure_operand(node.input[0])
         perm = [int(v) for v in attrs.get("perm", [])]
+        out_shape = self.infer_transpose_shape(inp.shape, perm)
+        self.set_value_info(node.output[0], out_shape)
         out = self.builder.create_op(
             "top.Permute",
             [inp],
             {"order": to_int_array(perm)},
             node.output[0],
-            self.shape_of(node.output[0]),
+            out_shape,
             self.dtype_of(node.output[0]),
             loc_name=self.node_loc_name(node, default_output=node.output[0]),
         )
@@ -923,21 +1059,7 @@ class OnnxToTopImporter:
             arg_type = tensor_type(shape, dtype)
             arg_name = f"%arg{index}"
             arg_defs.append(f"{arg_name}: {arg_type} loc({self.builder.loc_ref(value.name)})")
-        output_types = [tensor_type(self.shape_of(name), self.dtype_of(name)) for name in output_names]
-        if len(output_types) == 1:
-            result_sig = output_types[0]
-            return_sig = output_types[0]
-        else:
-            result_sig = "(" + ", ".join(output_types) + ")"
-            return_sig = ", ".join(output_types)
 
-        header = (
-            f'module @{self.args.model_name} attributes '
-            f'{{module.chip = "ALL", module.platform = "ONNX", module.state = "TOP_F32", '
-            f'module.top_run_mode = "STATIC", module.weight_file = "{self.args.weight_file}"}} {{'
-        )
-        lines = [header]
-        lines.append(f"  func.func @main({', '.join(arg_defs)}) -> {result_sig} {{")
         self.builder.lines = []
 
         for index, value in enumerate(inputs):
@@ -950,11 +1072,30 @@ class OnnxToTopImporter:
 
         result_values = [self.ensure_operand(name) for name in output_names]
         result_names = ", ".join(value.name for value in result_values)
-        self.builder.emit(f"return {result_names} : {return_sig} loc({self.builder.loc_ref('return')})")
+        output_types = [value.type_str for value in result_values]
+        if len(output_types) == 1:
+            result_sig = output_types[0]
+            return_sig = output_types[0]
+        else:
+            result_sig = "(" + ", ".join(output_types) + ")"
+            return_sig = ", ".join(output_types)
 
+        header = (
+            f'module @{self.args.model_name} attributes '
+            f'{{module.chip = "ALL", module.platform = "ONNX", module.state = "TOP_F32", '
+            f'module.top_run_mode = "STATIC", module.weight_file = "{self.args.weight_file}"}} {{'
+        )
+        lines = ["#loc = loc(unknown)", header]
+        unknown_arg_defs = []
+        for arg_def in arg_defs:
+            unknown_arg_defs.append(re.sub(r" loc\(#loc\d+\)$", " loc(unknown)", arg_def))
+        lines.append(f"  func.func @main({', '.join(unknown_arg_defs)}) -> {result_sig} {{")
         lines.extend(self.builder.lines)
-        lines.append(f"  }} loc({self.builder.loc_ref('main')})")
-        lines.append(f"}} loc({self.builder.loc_ref(self.args.model_name)})")
+        self.builder.emit(f"return {result_names} : {return_sig} loc(#loc)")
+
+        lines.append(self.builder.lines[-1])
+        lines.append("  } loc(#loc)")
+        lines.append("} loc(#loc)")
         lines.extend(self.builder.loc_definitions())
         return ("\n".join(lines) + "\n", self.builder.weight_map)
 
