@@ -33,12 +33,14 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from top_canonicalize import canonicalize_mlir
 
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_ONNX = REPO_ROOT / "models" / "yolov5s.onnx"
 DEFAULT_WORKDIR = REPO_ROOT / "experiments" / "01_onnx_to_mlir"
 DEFAULT_MLIR = "yolov5s.mlir"
+DEFAULT_CANONICAL_MLIR = "yolov5s_canonical.mlir"
 DEFAULT_WEIGHT = "yolov5s_top_f32_all_origin_weight.npz"
 DEFAULT_MODEL_NAME = "yolov5s"
 DEFAULT_INPUT_SHAPES = "[[1,3,640,640]]"
@@ -68,6 +70,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-def", type=Path, default=DEFAULT_ONNX)
     parser.add_argument("--workdir", type=Path, default=DEFAULT_WORKDIR)
     parser.add_argument("--mlir", default=DEFAULT_MLIR)
+    parser.add_argument("--canonical-mlir", default=DEFAULT_CANONICAL_MLIR)
     parser.add_argument("--weight-file", default=DEFAULT_WEIGHT)
     parser.add_argument(
         "--input-shapes",
@@ -104,6 +107,7 @@ def parse_args() -> argparse.Namespace:
         choices=["normal", "center"],
     )
     parser.add_argument("--dump-summary", action="store_true")
+    parser.add_argument("--canonicalize", action="store_true")
     return parser.parse_args()
 
 
@@ -1120,9 +1124,15 @@ def main() -> int:
     weight_path = args.workdir / args.weight_file
     mlir_path.write_text(mlir_text, encoding="utf-8")
     np.savez(weight_path, **weights)
+    if args.canonicalize:
+        canonical_path = args.workdir / args.canonical_mlir
+        canonical_text = canonicalize_mlir(mlir_text)
+        canonical_path.write_text(canonical_text, encoding="utf-8")
 
     print(f"Wrote Top MLIR to: {normalize_path(mlir_path)}")
     print(f"Wrote weights to: {normalize_path(weight_path)}")
+    if args.canonicalize:
+        print(f"Wrote canonical Top MLIR to: {normalize_path(canonical_path)}")
     print(f"Selected outputs: {', '.join(importer.output_names())}")
     return 0
 

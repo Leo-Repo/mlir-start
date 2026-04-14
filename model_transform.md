@@ -388,7 +388,7 @@ loc 表的来源规则：
 | 名称 | 类型 | 主要职责 |
 | --- | --- | --- |
 | `parse_args()` | 函数 | 解析命令行参数，建立模型路径、输出路径、输入 shape、输出节点、预处理配置。 |
-| `main()` | 函数 | 脚本入口。创建 importer，执行转换，写出 `.mlir` 与 `.npz`。 |
+| `main()` | 函数 | 脚本入口。创建 importer，执行转换，写出 `.mlir`、`.npz`，可选再写出 canonicalize 后 `.mlir`。 |
 | `import_onnx()` | 函数 | 延迟导入 `onnx` 相关模块，避免在环境未激活时脚本直接崩溃。 |
 | `sanitize_symbol()` | 函数 | 将 ONNX 名称清洗成适合做权重 key 的安全字符串。 |
 | `parse_input_shapes()` | 函数 | 解析 `[[1,3,640,640]]` 这类输入 shape 文本。 |
@@ -448,7 +448,77 @@ loc 表的来源规则：
 
 这个顺序比较符合“从整体流程到局部实现”的理解路径。
 
-## 12. 一句话总结
+## 12. 本地 Canonicalize 设计
+
+除了原始 importer，本项目还补充了一个本地版 canonicalize 脚本：
+
+- [`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py)
+
+它的定位不是复刻 `tpuc-opt --canonicalize` 全量行为，而是针对当前 `yolov5s` 原始 Top MLIR 做一组“小而实用”的规范化规则。
+
+### 12.1 为什么单独做一层
+
+将 canonicalize 独立出来，而不是继续堆进 importer，有几个好处：
+
+- 保留“原始 Top MLIR”，方便学习前端 importer 的真实输出
+- 单独观察 canonicalize 前后差异，更适合做 Day 3 对比
+- 让职责边界更清楚：
+  - [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 负责原始导入
+  - [`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py) 负责后续规范化
+
+### 12.2 当前实现的 canonicalize 规则
+
+这版本地 canonicalize 目前覆盖了和 `yolov5s` 直接相关的几类规则：
+
+- 清洗 `Resize -> top.Interp` 中的字节串属性
+  - `"b'asymmetric'" -> "asymmetric"`
+  - `"b'nearest'" -> "nearest"`
+- 为 `top.MaxPool` 重新推导静态输出 shape
+- 为 `top.Interp` 重新推导静态输出 shape
+- 为 `top.Concat` 重新推导静态输出 shape
+- 为 `top.Reshape` 重新推导静态输出 shape
+- 为 `top.Permute` 重新推导静态输出 shape
+- 删除 no-op `top.Reshape`
+- 删除 identity `top.Permute`
+
+这使 canonicalize 后的 [`yolov5s_canonical.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_canonical.mlir) 在以下位置更干净：
+
+- SPPF 段连续 `top.MaxPool` 的 shape 从 `?` 变成静态 `20x20`
+- `top.Interp` 的 `coord_mode` / `mode` 属性变得更可读
+- `Concat` 前后的类型链更一致
+
+### 12.3 与官方 `tpu-mlir` canonicalize 的关系
+
+这套实现和官方 `tpu-mlir` 的关系是：
+
+- 目标相似：都在“原始 Top IR 之后”做规范化
+- 范围更小：只覆盖我们当前 `yolov5s` 场景下最需要的规则
+- 形式更轻：直接在文本级做解析、推导和重写
+
+因此它更适合当前这个学习型项目，但不能等价替代官方完整 pass pipeline。
+
+### 12.4 当前用法
+
+可以直接单独运行：
+
+```bash
+python3 /home/jay/projs/mlir_start/top_canonicalize.py \
+  --input /home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s.mlir \
+  --output /home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_canonical.mlir
+```
+
+也可以在 importer 结束后顺手生成：
+
+```bash
+python /home/jay/projs/mlir_start/model_transform.py --canonicalize
+```
+
+这样会同时输出：
+
+- 原始 IR：[`yolov5s.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s.mlir)
+- canonicalize 后 IR：[`yolov5s_canonical.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_canonical.mlir)
+
+## 13. 一句话总结
 
 [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 的本质是：
 
@@ -460,5 +530,6 @@ loc 表的来源规则：
 - 常量折叠
 - ONNX 到 `top.*` 的显式映射
 - 独立的 MLIR 文本构造
+- 一个配套的本地 canonicalize 层
 
 完成了 `ONNX -> Top MLIR` 的第一版可运行闭环，并为后续 IR 阅读、节点映射和算子扩展打下了基础。
