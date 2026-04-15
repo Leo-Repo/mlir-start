@@ -153,6 +153,274 @@
 - 用当前 `build()` 的文本结果直接覆盖写回磁盘，确保文件内容与最新实现一致。
 - 将 canonicalize 单独实现为独立脚本，而不是继续塞回 importer，保留“原始 IR”和“规范化后 IR”两份产物，便于 Day 3 对比阅读。
 
+## 2026-04-15
+
+### Progress
+
+- 明确开始规划本地版 YOLOv5 fusion 路线，而不是继续把所有变化都堆到 canonicalize 中。
+- 重新检查 [`experiments/01_onnx_to_mlir/yolov5s.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s.mlir) 中最典型的激活模式，确认大量重复出现：
+  - `top.Conv`
+  - `top.Sigmoid`
+  - `top.Mul`
+- 明确这组模式对应 YOLOv5 中的 SiLU 结构，是最适合做第一条本地 fusion 规则的切入点。
+
+### Key Decisions
+
+- 不把“算子融合”继续塞进 [`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py)。
+- 将本地 fusion 设计为 canonicalize 之后的独立层更合适：
+  - importer 负责原始导入
+  - canonicalize 负责规范化和静态化
+  - fusion 负责结构重写和性能导向优化
+- 第一条 fusion 规则优先选择：
+  - `top.Conv -> top.Sigmoid -> top.Mul`
+  - 其中 `top.Mul` 的两个输入必须正好是 `Conv` 输出和对应 `Sigmoid(Conv)` 输出
+
+### Questions Answered
+
+- 明确了“canonicalize”和“fusion”的职责边界：
+  - `canonicalize` 更偏向语义不变的整理、补 shape、去 no-op、清洗属性
+  - `fusion` 更偏向图结构重写，把多条 op 合并成一个更高层、更适合后续 lowering 的模式
+- 明确本地版 YOLOv5 fusion 最适合放在“canonicalize 之后、lowering 之前”的独立 pass 层。
+
+### Next Step
+
+- 设计一个单独的本地 fusion 脚本，例如：
+  - [`top_fuse.py`](/home/jay/projs/mlir_start/top_fuse.py)
+- 第一阶段先只支持 SiLU pattern 融合，并保留足够清晰的 loc / 注释 / 映射关系，方便继续做 IR 阅读。
+
+### Fusion Prototype Landed
+
+- 已新增第一版 [`top_fuse.py`](/home/jay/projs/mlir_start/top_fuse.py)。
+- 当前规则只做一条保守融合：
+  - `top.Conv -> top.Sigmoid -> top.Mul`
+  - 最终改写为更接近官方 `tpu-mlir` 的形式：`top.Conv -> top.SiLU`
+- 融合条件：
+  - `Sigmoid` 必须直接消费 `Conv` 结果
+  - `Mul` 必须正好消费 `Conv` 输出和对应的 `Sigmoid(Conv)` 输出
+  - `Sigmoid` 输出只能被该 `Mul` 使用
+- 当前在 [`experiments/01_onnx_to_mlir/yolov5s_fused.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_fused.mlir) 中已成功融合 `57` 处 SiLU pattern。
+- 对照本机 `tpu-mlir` 实现确认：
+  - [`TorchConverter.py`](/home/jay/projs/tpu-mlir/python/transform/TorchConverter.py)
+  - [`regression_out/yolov5s.mlir`](/home/jay/projs/tpu-mlir/regression/regression_out/yolov5s_bm1684x_num_core_1/yolov5s.mlir)
+  官方风格确实使用 `top.SiLU`。
+
+### Current Limitation
+
+- 当前产物已经比最初的 `top.FusedConvSilu` 更接近官方可继续 lowering 的表达方式，但仍然只是本地文本级重写 pass。
+- 还没有进一步接入官方 `tpuc-opt` 流水线验证真正的后续 lowering 兼容性。
+
+### Fusion Analysis Utilities
+
+- 为 [`top_fuse.py`](/home/jay/projs/mlir_start/top_fuse.py) 增加了：
+  - `--summary-only`
+  - `--dump-patterns`
+- 现在可以先只做 pattern 统计，而不写回融合后的 MLIR。
+- 当前统计结果：
+  - `Conv + Sigmoid + Mul -> Conv + SiLU` 共检测到 `57` 处
+
+### Minimal PTQ Landed
+
+- 因为本机 `tpu-mlir` 运行时存在 Python `3.10` / `3.11` ABI 不匹配，官方 `run_calibration.py` / `model_deploy.py` 在当前 `llama` 环境下无法直接运行。
+- 因此改为参考官方工程分层，自行实现最小版 PTQ 流程：
+  - [`mini_ptq.py`](/home/jay/projs/mlir_start/mini_ptq.py)
+- 该脚本基于本机已有的 [`/home/jay/projs/yolov5`](/home/jay/projs/yolov5) 和 `yolov5s.pt`，实现了：
+  - calibration
+  - fake quantization
+  - layer-wise error attribution
+
+### PTQ Outputs
+
+- 校准表：
+  - [`yolov5s_mini_cali_table.json`](/home/jay/projs/mlir_start/experiments/02_quant/yolov5s_mini_cali_table.json)
+- 量化误差报告：
+  - [`yolov5s_mini_ptq_report.json`](/home/jay/projs/mlir_start/experiments/02_quant/yolov5s_mini_ptq_report.json)
+- 摘要：
+  - [`yolov5s_mini_ptq_summary.md`](/home/jay/projs/mlir_start/experiments/02_quant/yolov5s_mini_ptq_summary.md)
+
+### PTQ Result Snapshot
+
+- 校准图片数：`100`
+- 评估图片数：`10`
+- 校准 tensor 数量：`28`
+- 最大激活阈值 tensor：`model.24.0`
+- 最差图片：
+  - `000000000064.jpg`
+  - cosine `0.998938`
+  - mse `7.117341`
+- 最差层：
+  - `model.8`
+  - cosine `0.895773`
+  - mse `0.045584`
+
+### PTQ Flow Clarification
+
+- 重新对齐了 `tpu-mlir` 官方链路的关键边界：
+  - Calibration / Quantization 的主对象应该是 [`yolov5s_canonical.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_canonical.mlir) 这类 Top MLIR，而不是 PyTorch 模型本身。
+- 当前 [`mini_ptq.py`](/home/jay/projs/mlir_start/mini_ptq.py) 更准确的定位应视为：
+  - 一个“参考官方工程思路的最小近似实现”
+  - 方便先理解 calibration、fake quant 和误差归因三个环节
+  - 但它还不是严格意义上的 “MLIR 运行 + blob 对比” 主线实现
+- 对齐官方流程时，当前阶段更合适的比较对象是三个检测头原始输出 blob：
+  - `350`
+  - `498`
+  - `646`
+- 这一步通常不需要引入检测后处理；重点是比较 raw output tensor，而不是 decode/NMS 之后的框结果。
+- 后续若继续最小实现，应优先补“canonical Top MLIR 执行 + 输出 blob 对比”这一层，再决定是否继续扩展到更完整的量化流水线。
+
+### Minimal Top Runner Landed
+
+- 已新增本地最小 Top MLIR 执行器：
+  - [`top_run.py`](/home/jay/projs/mlir_start/top_run.py)
+- 这版执行器不依赖官方 `pymlir` runtime，而是直接解析 [`yolov5s_canonical.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_canonical.mlir)，并用 `torch.nn.functional` 执行当前 `yolov5s` 需要的少量 `top.*`：
+  - `top.Input`
+  - `top.Weight`
+  - `top.Conv`
+  - `top.Sigmoid`
+  - `top.Mul`
+  - `top.Add`
+  - `top.Concat`
+  - `top.MaxPool`
+  - `top.Interp`
+  - `top.Reshape`
+  - `top.Permute`
+- 默认直接读取官方回归输入：
+  - [`yolov5s_in_f32.npz`](/home/jay/projs/tpu-mlir/regression/regression_out/yolov5s_bm1684x_num_core_1/yolov5s_in_f32.npz)
+- 默认输出本地运行结果：
+  - [`experiments/03_top_run/yolov5s_top_run_outputs.npz`](/home/jay/projs/mlir_start/experiments/03_top_run/yolov5s_top_run_outputs.npz)
+
+### Top Runner Verification
+
+- 已在 `llama` 环境中实际执行：
+  - `python top_run.py`
+- 成功跑出三个返回 blob：
+  - `350` -> `Transpose_214` -> `(1, 3, 80, 80, 85)`
+  - `498` -> `Transpose_326` -> `(1, 3, 40, 40, 85)`
+  - `646` -> `Transpose_438` -> `(1, 3, 20, 20, 85)`
+- 使用官方 `yolov5s_top_outputs.npz` 中的三个 head `Conv` 输出经 `reshape + permute` 后进行对比，结果高度一致：
+  - `350`: cosine `1.000000`, max_abs_diff `0.000031`
+  - `498`: cosine `1.000000`, max_abs_diff `0.000019`
+  - `646`: cosine `1.000000`, max_abs_diff `0.000018`
+- 这说明当前本地 `top_run.py` 已经可以作为后续 calibration / quantization / blob 级误差归因的主执行入口。
+
+### MLIR Native Skeleton Landed
+
+- 根据“项目主线应逐步融入 LLVM/MLIR 体系，而不是继续扩张纯 Python”的新目标，新增了原生子工程：
+  - [`mlir_native/README.md`](/home/jay/projs/mlir_start/mlir_native/README.md)
+- 这版不是全量复刻 `tpu-mlir`，而是先搭出最小 MLIR 原生骨架：
+  - `CMake + find_package(MLIR/LLVM)`
+  - TableGen 定义的最小 `mini_top` dialect
+  - C++ 实现的 op 包装与 pass
+  - 一个可执行的 `mini-top-opt`
+
+### Native Files Added
+
+- 顶层构建：
+  - [`mlir_native/CMakeLists.txt`](/home/jay/projs/mlir_start/mlir_native/CMakeLists.txt)
+- Dialect / ODS：
+  - [`MiniTopDialect.h`](/home/jay/projs/mlir_start/mlir_native/include/mlir_start/Dialect/MiniTop/IR/MiniTopDialect.h)
+  - [`MiniTopOps.h`](/home/jay/projs/mlir_start/mlir_native/include/mlir_start/Dialect/MiniTop/IR/MiniTopOps.h)
+  - [`MiniTopOps.td`](/home/jay/projs/mlir_start/mlir_native/include/mlir_start/Dialect/MiniTop/IR/MiniTopOps.td)
+- Pass：
+  - [`Passes.h`](/home/jay/projs/mlir_start/mlir_native/include/mlir_start/Dialect/MiniTop/Transforms/Passes.h)
+  - [`Passes.td`](/home/jay/projs/mlir_start/mlir_native/include/mlir_start/Dialect/MiniTop/Transforms/Passes.td)
+  - [`FuseSiLU.cpp`](/home/jay/projs/mlir_start/mlir_native/lib/Dialect/MiniTop/FuseSiLU.cpp)
+- Tool：
+  - [`mini-top-opt.cpp`](/home/jay/projs/mlir_start/mlir_native/tools/mini-top-opt/mini-top-opt.cpp)
+- 示例：
+  - [`silu_pattern.mlir`](/home/jay/projs/mlir_start/mlir_native/examples/silu_pattern.mlir)
+
+### Native Verification
+
+- 使用本机 LLVM/MLIR 构建目录完成配置与编译：
+  - `MLIR_DIR=/home/jay/projs/llvm-project/build/lib/cmake/mlir`
+  - `LLVM_DIR=/home/jay/projs/llvm-project/build/lib/cmake/llvm`
+- 已成功生成：
+  - [`mini-top-opt`](/home/jay/projs/mlir_start/mlir_native/build/bin/mini-top-opt)
+- 已实际运行：
+  - `mini-top-opt silu_pattern.mlir --mini-top-fuse-silu`
+- 结果符合预期：
+  - `mini_top.sigmoid + mini_top.mul` 被原生 pass 改写为 `mini_top.silu`
+  - 死掉的 `sigmoid` 也会一并删除
+
+### Meaning
+
+- 这一步标志着项目从“Python 原型为主”正式进入“MLIR 原生骨架已建立”的阶段。
+- 后续如果继续贴近 `tpu-mlir`，更合理的路线应是：
+  - 逐步把关键 pattern / op 迁入 `mlir_native`
+  - 再决定是否接入更完整的 interpreter / lowering / runtime
+
+### Project Structure Realigned
+
+- 明确将仓库视为两个子项目：
+  - 根目录 Python 原型线
+  - [`mlir_native/`](/home/jay/projs/mlir_start/mlir_native) MLIR 原生线
+- 新增结构说明文档：
+  - [`docs/project_structure.md`](/home/jay/projs/mlir_start/docs/project_structure.md)
+- 进一步明确策略：
+  - 停止继续扩张 Python runtime
+  - Python 脚本只保留“参考实现 / 对照 oracle / bug 修复”角色
+  - 新的编译器主线工作优先进入 `mlir_native`
+
+### First Lowering Landed
+
+- 在 [`mlir_native`](/home/jay/projs/mlir_start/mlir_native) 中新增第一条 lowering pass：
+  - [`LowerActivations.cpp`](/home/jay/projs/mlir_start/mlir_native/lib/Dialect/MiniTop/LowerActivations.cpp)
+- 当前 lowering 范围：
+  - `mini_top.sigmoid -> arith + math`
+  - `mini_top.mul -> arith.mulf`
+  - `mini_top.silu -> arith + math`
+- 这一步的定位不是全量 `mini_top -> linalg`，而是先建立一个真实的“从自定义 dialect 往更低层标准 dialect 下沉”的边界。
+
+### Lowering Verification
+
+- 已成功重新编译：
+  - [`mini-top-opt`](/home/jay/projs/mlir_start/mlir_native/build/bin/mini-top-opt)
+- 后续推荐直接使用如下命令观察两步 native pipeline：
+  - `mini-top-opt silu_pattern.mlir --mini-top-fuse-silu --mini-top-lower-activations`
+- 已实际运行成功，当前示例输出结果已经体现第一步 lowering：
+  - `mini_top.conv` 仍然保留在 `mini_top`
+  - `mini_top.silu` 已下沉为：
+    - `arith.constant`
+    - `arith.mulf`
+    - `math.exp`
+    - `arith.addf`
+    - `arith.divf`
+- 这说明项目已经具备：
+  - 原生 rewrite
+  - 原生 lowering
+  - 原生 `mlir-opt` 风格工具
+
+### More YOLOv5 Patterns Migrated To Native
+
+- 继续把 Python 原型中的 YOLOv5 相关 pattern 迁入 [`mlir_native/`](/home/jay/projs/mlir_start/mlir_native)，这次新增的是 layout 规范化相关规则。
+- 在 [`MiniTopOps.td`](/home/jay/projs/mlir_start/mlir_native/include/mlir_start/Dialect/MiniTop/IR/MiniTopOps.td) 中新增：
+  - `mini_top.reshape`
+  - `mini_top.permute`
+- 新增原生 pass：
+  - [`CanonicalizeLayout.cpp`](/home/jay/projs/mlir_start/mlir_native/lib/Dialect/MiniTop/CanonicalizeLayout.cpp)
+  - pass 名称：`--mini-top-canonicalize-layout`
+- 该 pass 当前迁入了两条来自 Python `top_canonicalize.py` 的稳定规则：
+  - 删除 no-op `reshape`
+  - 删除 identity `permute`
+
+### Layout Canonicalize Verification
+
+- 新增验证样例：
+  - [`layout_patterns.mlir`](/home/jay/projs/mlir_start/mlir_native/examples/layout_patterns.mlir)
+- 已实际运行：
+  - `mini-top-opt layout_patterns.mlir --mini-top-canonicalize-layout`
+- 当前输出会直接化简为：
+  - `return %arg0`
+- 这说明本地原生链路已经不只包含 SiLU rewrite，也开始承接 YOLOv5 中常见的“布局整理类 canonicalize”。
+
+### Native Integration Notes
+
+- 迁入 `reshape/permute` 时，遇到了 MLIR 新版 ODS 自动生成的 bytecode/property 接口编译问题。
+- 最终通过为 [`MiniTopOps.h`](/home/jay/projs/mlir_start/mlir_native/include/mlir_start/Dialect/MiniTop/IR/MiniTopOps.h) 补充 bytecode 相关头文件，成功让新 op 的 TableGen 代码在当前 LLVM/MLIR 版本下正常编译。
+- 这次问题也进一步说明：
+  - Python 原型适合快速试规则
+  - 一旦进入原生链路，就必须真正理解 ODS、生成代码和 MLIR 版本接口的关系
+
 ## Working Agreement
 
 - 本文件用于记录每日进展、问题、决定和处理结果。

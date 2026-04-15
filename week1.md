@@ -3,8 +3,8 @@
 ## 周目标
 
 1. 跑通 `yolov5s.onnx -> Top MLIR`
-2. 跑通 calibration 与 INT8 部署
-3. 建立第一版 IR 对照笔记与误差记录
+2. 建立第一版 IR 对照笔记与误差记录
+3. 从 Python 原型切到 MLIR 原生骨架，开始第一步 lowering
 
 ## Day 1：准备与盘点
 
@@ -33,18 +33,18 @@
 
 产物：`docs/notes/day3_ir_mapping.md`
 
-## Day 4：Calibration
+## Day 4：Calibration 认知与边界澄清
 
 1. 准备校准样本（首版 100 张）
-2. 执行 `run_calibration.py`
+2. 梳理 calibration 应面向 `canonical Top MLIR` 的 blob 对比，而不是检测后处理结果
 3. 记录 calibration 配置与生成表
 
 产物：`docs/notes/day4_calibration.md`
 
-## Day 5：Quantization 与部署产物
+## Day 5：Quantization 与部署产物认知
 
-1. 执行 `model_deploy.py --quantize INT8`
-2. 对比 FP32 与 INT8 输出（先做 10 张固定样本）
+1. 明确官方链路与本地最小 PTQ 原型的区别
+2. 对比 FP32 与 INT8 的 blob / tensor 视角
 3. 记录异常样本与误差趋势
 
 产物：`docs/notes/day5_quant_eval.md`
@@ -57,7 +57,16 @@
 
 产物：`docs/notes/day6_error_analysis.md`
 
-## Day 7：阶段验收
+## Day 7：MLIR 原生切换
+
+1. 梳理项目结构，明确 Python 原型线与 MLIR 原生线的边界
+2. 冻结 Python runtime 扩展，只保留参考实现角色
+3. 在 `mlir_native/` 中完成第一个原生 rewrite 和第一个 lowering pass
+4. 产出可执行的 `mini-top-opt`
+
+产物：`docs/project_structure.md`
+
+## 阶段验收
 
 1. 对照验收标准自检
 2. 输出“本周结论 + 下周计划”
@@ -68,6 +77,7 @@
 ## 本周验收标准
 
 1. 有可复现的 ONNX->MLIR 命令与产物
-2. 有可复现的 calibration/quantization 命令与产物
+2. 有 calibration/quantization 边界说明与现有实验产物
 3. 有一份 IR 映射笔记
 4. 有一份误差分析笔记
+5. 有一个可编译、可运行的 MLIR 原生子工程

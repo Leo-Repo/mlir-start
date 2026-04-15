@@ -1,0 +1,104 @@
+# MLIR Native Skeleton
+
+This subtree is the first LLVM/MLIR-native skeleton for the project.
+
+It intentionally does not replace the existing Python prototype yet. Instead it
+gives us a minimal place to move core concepts into the MLIR ecosystem:
+
+- TableGen-defined ops
+- a real dialect in C++
+- a native rewrite pass
+- an `mlir-opt`-style driver
+
+## Current Scope
+
+The first slice is deliberately small:
+
+- Dialect: `mini_top`
+- Ops:
+  - `mini_top.conv`
+  - `mini_top.sigmoid`
+  - `mini_top.mul`
+  - `mini_top.silu`
+  - `mini_top.reshape`
+  - `mini_top.permute`
+- Pass:
+  - `--mini-top-fuse-silu`
+  - `--mini-top-canonicalize-layout`
+  - `--mini-top-lower-activations`
+
+This is enough to mirror the first important pattern we already studied in
+YOLOv5:
+
+`Conv + Sigmoid + Mul -> SiLU`
+
+The project is now intentionally split into two layers:
+
+- root Python scripts:
+  - importer / exploration / reference execution
+  - frozen as reference-oracle code except for bug fixes
+- `mlir_native/`:
+  - the forward-looking MLIR/LLVM-native implementation track
+  - where new pass/lowering work should land
+
+## Build
+
+```bash
+cmake -S /home/jay/projs/mlir_start/mlir_native \
+  -B /home/jay/projs/mlir_start/mlir_native/build \
+  -DMLIR_DIR=/home/jay/projs/llvm-project/build/lib/cmake/mlir \
+  -DLLVM_DIR=/home/jay/projs/llvm-project/build/lib/cmake/llvm
+
+cmake --build /home/jay/projs/mlir_start/mlir_native/build -j
+```
+
+## Try It
+
+```bash
+/home/jay/projs/mlir_start/mlir_native/build/bin/mini-top-opt \
+  /home/jay/projs/mlir_start/mlir_native/examples/silu_pattern.mlir \
+  --mini-top-fuse-silu
+```
+
+If the pass runs as expected, the `mini_top.mul` should be rewritten to
+`mini_top.silu`.
+
+To observe YOLOv5-style layout canonicalization:
+
+```bash
+/home/jay/projs/mlir_start/mlir_native/build/bin/mini-top-opt \
+  /home/jay/projs/mlir_start/mlir_native/examples/layout_patterns.mlir \
+  --mini-top-canonicalize-layout
+```
+
+This removes:
+
+- no-op `mini_top.reshape`
+- identity `mini_top.permute`
+
+To observe the first lowering step:
+
+```bash
+/home/jay/projs/mlir_start/mlir_native/build/bin/mini-top-opt \
+  /home/jay/projs/mlir_start/mlir_native/examples/silu_pattern.mlir \
+  --mini-top-fuse-silu \
+  --mini-top-lower-activations
+```
+
+This keeps `mini_top.conv` untouched for now, but lowers `mini_top.silu` into
+`arith` + `math` ops.
+
+## What Moved From Python
+
+The native line now contains the first small batch of YOLOv5-relevant rules
+that originally lived in the Python prototypes:
+
+- `Conv + Sigmoid + Mul -> SiLU`
+- remove no-op `reshape`
+- remove identity `permute`
+
+This is the current pattern migration direction for the project:
+
+1. validate the idea in Python
+2. move the stable rule into `mlir_native`
+3. keep Python as an oracle, not the main compiler path
