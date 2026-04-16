@@ -16,7 +16,7 @@
 
 ## Day 2：ONNX -> 原始 Top MLIR
 
-1. 用 `model_transform.py` 完成 `yolov5s.onnx -> 原始 Top MLIR`
+1. 用 `legacy_python_frontend/model_transform.py` 完成 `yolov5s.onnx -> 原始 Top MLIR`
 2. 固化关键输入参数（shape/mean/scale/pixel_format/output_names）
 3. 产出 `.mlir`、权重 `.npz` 与转换说明文档
 4. 明确“当前产物是原始 Top MLIR，还未经过 canonicalize”
@@ -28,7 +28,7 @@
 1. 从原始 `.mlir` 中抽取关键算子链（Conv、Concat、Upsample、Detect head 输出相关）
 2. 建立 ONNX 节点到 Top MLIR op 映射表
 3. 对原始 IR 执行或观察 `canonicalize` 后结果，记录前后变化
-4. 使用本地 [`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py) 对 `yolov5s.mlir` 生成 `yolov5s_canonical.mlir`，重点观察 `MaxPool`、`Interp`、`Concat`、`Reshape`、`Permute` 的变化
+4. 使用本地 [`top_canonicalize.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_canonicalize.py) 对 `yolov5s.mlir` 生成 `yolov5s_canonical.mlir`，重点观察 `MaxPool`、`Interp`、`Concat`、`Reshape`、`Permute` 的变化
 5. 标注你不理解的 5~10 个 op/属性或 fold 现象，作为后续突破点
 
 产物：`docs/notes/day3_ir_mapping.md`

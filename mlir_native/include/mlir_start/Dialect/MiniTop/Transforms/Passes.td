@@ -27,7 +27,8 @@ def MiniTopCanonicalizeLayout : Pass<"mini-top-canonicalize-layout", "mlir::func
     - remove no-op `mini_top.reshape`
     - remove identity `mini_top.permute`
 
-    This mirrors the local Python `top_canonicalize.py` behavior, but now lives
+    This mirrors the local Python `legacy_python_frontend/top_canonicalize.py`
+    behavior, but now lives
     as a real MLIR rewrite pass.
   }];
   let constructor = "mlir::mlir_start::mini_top::createCanonicalizeLayoutPass()";

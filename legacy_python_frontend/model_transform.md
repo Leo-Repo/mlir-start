@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文档说明本项目中的 [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 的设计架构、实现原理、当前支持范围与后续扩展方向。
+本文档说明本项目中的 [`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py) 的设计架构、实现原理、当前支持范围与后续扩展方向。
 
 这个脚本的目标不是调用 `tpu-mlir` 官方 Python 包，而是独立实现一个最小可用的 `ONNX -> Top MLIR` 前端 importer，用于：
 
@@ -12,7 +12,7 @@
 
 ## 2. 脚本定位
 
-[`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 是一个学习型、可运行的 ONNX 前端原型。它完成如下工作：
+[`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py) 是一个学习型、可运行的 ONNX 前端原型。它完成如下工作：
 
 - 读取 ONNX 模型
 - 收集输入、输出、`initializer` 与中间 `value_info`
@@ -383,7 +383,7 @@ loc 表的来源规则：
 
 ## 11. 类 / 函数职责速查表
 
-下面这张表用于把文档和代码快速对齐，方便阅读 [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 时快速定位职责。
+下面这张表用于把文档和代码快速对齐，方便阅读 [`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py) 时快速定位职责。
 
 | 名称 | 类型 | 主要职责 |
 | --- | --- | --- |
@@ -452,7 +452,7 @@ loc 表的来源规则：
 
 除了原始 importer，本项目还补充了一个本地版 canonicalize 脚本：
 
-- [`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py)
+- [`top_canonicalize.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_canonicalize.py)
 
 它的定位不是复刻 `tpuc-opt --canonicalize` 全量行为，而是针对当前 `yolov5s` 原始 Top MLIR 做一组“小而实用”的规范化规则。
 
@@ -463,8 +463,8 @@ loc 表的来源规则：
 - 保留“原始 Top MLIR”，方便学习前端 importer 的真实输出
 - 单独观察 canonicalize 前后差异，更适合做 Day 3 对比
 - 让职责边界更清楚：
-  - [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 负责原始导入
-  - [`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py) 负责后续规范化
+  - [`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py) 负责原始导入
+  - [`top_canonicalize.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_canonicalize.py) 负责后续规范化
 
 ### 12.2 当前实现的 canonicalize 规则
 
@@ -502,7 +502,7 @@ loc 表的来源规则：
 可以直接单独运行：
 
 ```bash
-python3 /home/jay/projs/mlir_start/top_canonicalize.py \
+python3 /home/jay/projs/mlir_start/legacy_python_frontend/top_canonicalize.py \
   --input /home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s.mlir \
   --output /home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_canonical.mlir
 ```
@@ -510,7 +510,7 @@ python3 /home/jay/projs/mlir_start/top_canonicalize.py \
 也可以在 importer 结束后顺手生成：
 
 ```bash
-python /home/jay/projs/mlir_start/model_transform.py --canonicalize
+python /home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py --canonicalize
 ```
 
 这样会同时输出：
@@ -520,7 +520,7 @@ python /home/jay/projs/mlir_start/model_transform.py --canonicalize
 
 ## 13. 一句话总结
 
-[`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 的本质是：
+[`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py) 的本质是：
 
 一个围绕 `yolov5s.onnx` 场景打造的、独立实现的最小 ONNX 前端 importer。
 

@@ -102,3 +102,42 @@ This is the current pattern migration direction for the project:
 1. validate the idea in Python
 2. move the stable rule into `mlir_native`
 3. keep Python as an oracle, not the main compiler path
+
+## IR-Object Importer
+
+The project now also contains a first native-track ONNX importer prototype:
+
+- [`python/onnx_to_mini_top.py`](/home/jay/projs/mlir_start/mlir_native/python/onnx_to_mini_top.py)
+
+This importer is important because it changes the frontend style:
+
+- old archived frontend:
+  - parsed ONNX and concatenated `.mlir` text
+- new native-track frontend:
+  - parses ONNX
+  - uses `mlir.ir` objects plus `Operation.create(...)`
+  - builds `mini_top` IR in memory
+
+Current scope is intentionally limited to the YOLOv5 subset we already study:
+
+- `Conv`
+- `Sigmoid`
+- `Mul`
+- `Add`
+- `Concat`
+- `MaxPool`
+- `Resize`
+- `Reshape`
+- `Transpose`
+- shape-subgraph constant folding for `Shape/Gather/Unsqueeze/Cast`
+
+It also materializes model weights into a separate `.npz` file and emits
+`mini_top.weight` ops so the importer stays close to the "external weights +
+graph IR" style used by real compiler frontends.
+
+Note:
+
+- this script requires both `onnx` and upstream MLIR Python bindings
+- the current workspace build does not yet provide those bindings by default
+- so the script is checked in, syntax-checked, and ready to use once the MLIR
+  Python environment is available

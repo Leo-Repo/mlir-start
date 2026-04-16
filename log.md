@@ -4,10 +4,10 @@
 
 ### Progress
 
-- 明确第一周主线任务是跑通 `yolov5s.onnx -> Top MLIR`，并确认项目内相关说明主要集中在 [`week1.md`](/home/jay/projs/mlir_start/week1.md)、[`README.md`](/home/jay/projs/mlir_start/README.md)、[`docs/yolov5_pipeline.md`](/home/jay/projs/mlir_start/docs/yolov5_pipeline.md)。
+- 明确第一周主线任务是跑通 `yolov5s.onnx -> Top MLIR`，并确认项目内相关说明主要集中在 [`docs/archive/week1_archived.md`](/home/jay/projs/mlir_start/docs/archive/week1_archived.md)、[`README.md`](/home/jay/projs/mlir_start/README.md)、[`docs/yolov5_pipeline.md`](/home/jay/projs/mlir_start/docs/yolov5_pipeline.md)。
 - 检查仓库现状，确认已经存在 [`models/yolov5s.onnx`](/home/jay/projs/mlir_start/models/yolov5s.onnx)，可以直接进入 ONNX 前端导入阶段。
 - 明确目标不是调用 `tpu-mlir` 官方 `model_transform.py`，而是独立实现一个最小可用的 ONNX importer。
-- 新建并实现 [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 第一版，完成独立的 `ONNX -> Top MLIR` 文本生成框架。
+- 新建并实现 [`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py) 第一版，完成独立的 `ONNX -> Top MLIR` 文本生成框架。
 - 参考 `tpu-mlir` 官方产物格式，确定了 Top MLIR 的总体输出形态、`top.Input` / `top.Weight` / `top.Conv` / `top.Permute` 等文本风格。
 
 ### Key Decisions
@@ -30,7 +30,7 @@
 
 ### Progress
 
-- 在 `llama` conda 环境中真实执行 [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py)，沿着报错路径逐步补齐 ONNX shape 子图支持。
+- 在 `llama` conda 环境中真实执行 [`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py)，沿着报错路径逐步补齐 ONNX shape 子图支持。
 - 新增并稳定支持：
   - `Shape`
   - `Gather`
@@ -45,8 +45,8 @@
   - [`experiments/01_onnx_to_mlir/yolov5s.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s.mlir)
   - [`experiments/01_onnx_to_mlir/yolov5s_top_f32_all_origin_weight.npz`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_top_f32_all_origin_weight.npz)
 - 为 MLIR 输出补充了 loc 表，支持将普通 op 与 ONNX 节点名关联。
-- 编写设计文档 [`model_transform.md`](/home/jay/projs/mlir_start/model_transform.md)，说明 importer 的架构、原理和支持范围。
-- 在 [`week1.md`](/home/jay/projs/mlir_start/week1.md) 中将周计划调整为：
+- 编写设计文档 [`model_transform.md`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.md)，说明 importer 的架构、原理和支持范围。
+- 在 [`docs/archive/week1_archived.md`](/home/jay/projs/mlir_start/docs/archive/week1_archived.md) 中将周计划调整为：
   - Day 2: `ONNX -> 原始 Top MLIR`
   - Day 3: `原始 IR 阅读 + canonicalize 前后对比`
 
@@ -80,7 +80,7 @@
 
 ### Progress
 
-- 针对 IR 阅读阶段发现的 shape 问题，修复了 [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 中的静态 shape 传播。
+- 针对 IR 阅读阶段发现的 shape 问题，修复了 [`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py) 中的静态 shape 传播。
 - 为以下算子新增本地输出 shape 推导：
   - `Conv`
   - `Concat`
@@ -91,8 +91,8 @@
 - 修复 `build()` 中函数返回类型提前写死的问题，使 `func.func @main` 返回类型与最终输出 `ValueRef` 保持一致。
 - 重新生成 [`yolov5s.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s.mlir)，现在前几层和三个 head 输出都已经是静态 shape。
 - 开始进入“原始 IR 阅读”实战，抽出了 `350 / 498 / 646` 三条输出链。
-- 新增本地 canonicalize 脚本 [`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py)，用于在不依赖 `tpuc-opt` 的情况下，对 `yolov5s` 相关 Top MLIR 做一层轻量规范化。
-- 为 [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py) 增加 `--canonicalize` 开关，可在导入结束后同步生成 canonicalize 后版本：
+- 新增本地 canonicalize 脚本 [`top_canonicalize.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_canonicalize.py)，用于在不依赖 `tpuc-opt` 的情况下，对 `yolov5s` 相关 Top MLIR 做一层轻量规范化。
+- 为 [`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py) 增加 `--canonicalize` 开关，可在导入结束后同步生成 canonicalize 后版本：
   - [`experiments/01_onnx_to_mlir/yolov5s_canonical.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_canonical.mlir)
 - 在 `llama` conda 环境中重新执行了整条链路，确认原始 IR、权重 `.npz` 和 canonicalize 后 IR 都能稳定生成。
 
@@ -120,7 +120,7 @@
 
 ### Canonicalize Rules Added
 
-[`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py) 目前支持：
+[`top_canonicalize.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_canonicalize.py) 目前支持：
 
 - 清洗 `top.Interp` 中的字节串属性：
   - `"b'asymmetric'" -> "asymmetric"`
@@ -166,7 +166,7 @@
 
 ### Key Decisions
 
-- 不把“算子融合”继续塞进 [`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py)。
+- 不把“算子融合”继续塞进 [`top_canonicalize.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_canonicalize.py)。
 - 将本地 fusion 设计为 canonicalize 之后的独立层更合适：
   - importer 负责原始导入
   - canonicalize 负责规范化和静态化
@@ -185,12 +185,12 @@
 ### Next Step
 
 - 设计一个单独的本地 fusion 脚本，例如：
-  - [`top_fuse.py`](/home/jay/projs/mlir_start/top_fuse.py)
+  - [`top_fuse.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_fuse.py)
 - 第一阶段先只支持 SiLU pattern 融合，并保留足够清晰的 loc / 注释 / 映射关系，方便继续做 IR 阅读。
 
 ### Fusion Prototype Landed
 
-- 已新增第一版 [`top_fuse.py`](/home/jay/projs/mlir_start/top_fuse.py)。
+- 已新增第一版 [`top_fuse.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_fuse.py)。
 - 当前规则只做一条保守融合：
   - `top.Conv -> top.Sigmoid -> top.Mul`
   - 最终改写为更接近官方 `tpu-mlir` 的形式：`top.Conv -> top.SiLU`
@@ -211,7 +211,7 @@
 
 ### Fusion Analysis Utilities
 
-- 为 [`top_fuse.py`](/home/jay/projs/mlir_start/top_fuse.py) 增加了：
+- 为 [`top_fuse.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_fuse.py) 增加了：
   - `--summary-only`
   - `--dump-patterns`
 - 现在可以先只做 pattern 统计，而不写回融合后的 MLIR。
@@ -222,7 +222,7 @@
 
 - 因为本机 `tpu-mlir` 运行时存在 Python `3.10` / `3.11` ABI 不匹配，官方 `run_calibration.py` / `model_deploy.py` 在当前 `llama` 环境下无法直接运行。
 - 因此改为参考官方工程分层，自行实现最小版 PTQ 流程：
-  - [`mini_ptq.py`](/home/jay/projs/mlir_start/mini_ptq.py)
+  - [`mini_ptq.py`](/home/jay/projs/mlir_start/legacy_python_frontend/mini_ptq.py)
 - 该脚本基于本机已有的 [`/home/jay/projs/yolov5`](/home/jay/projs/yolov5) 和 `yolov5s.pt`，实现了：
   - calibration
   - fake quantization
@@ -256,7 +256,7 @@
 
 - 重新对齐了 `tpu-mlir` 官方链路的关键边界：
   - Calibration / Quantization 的主对象应该是 [`yolov5s_canonical.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_canonical.mlir) 这类 Top MLIR，而不是 PyTorch 模型本身。
-- 当前 [`mini_ptq.py`](/home/jay/projs/mlir_start/mini_ptq.py) 更准确的定位应视为：
+- 当前 [`mini_ptq.py`](/home/jay/projs/mlir_start/legacy_python_frontend/mini_ptq.py) 更准确的定位应视为：
   - 一个“参考官方工程思路的最小近似实现”
   - 方便先理解 calibration、fake quant 和误差归因三个环节
   - 但它还不是严格意义上的 “MLIR 运行 + blob 对比” 主线实现
@@ -270,7 +270,7 @@
 ### Minimal Top Runner Landed
 
 - 已新增本地最小 Top MLIR 执行器：
-  - [`top_run.py`](/home/jay/projs/mlir_start/top_run.py)
+  - [`top_run.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_run.py)
 - 这版执行器不依赖官方 `pymlir` runtime，而是直接解析 [`yolov5s_canonical.mlir`](/home/jay/projs/mlir_start/experiments/01_onnx_to_mlir/yolov5s_canonical.mlir)，并用 `torch.nn.functional` 执行当前 `yolov5s` 需要的少量 `top.*`：
   - `top.Input`
   - `top.Weight`
@@ -291,7 +291,7 @@
 ### Top Runner Verification
 
 - 已在 `llama` 环境中实际执行：
-  - `python top_run.py`
+  - `python legacy_python_frontend/top_run.py`
 - 成功跑出三个返回 blob：
   - `350` -> `Transpose_214` -> `(1, 3, 80, 80, 85)`
   - `498` -> `Transpose_326` -> `(1, 3, 40, 40, 85)`
@@ -425,3 +425,95 @@
 
 - 本文件用于记录每日进展、问题、决定和处理结果。
 - 后续在这个项目里继续推进时，默认同步更新本日志。
+
+## 2026-04-16
+
+### Python Archive Landed
+
+- 按当前项目分层约定，将已停止继续扩张的 Python 原型脚本统一归档到：
+  - [`legacy_python_frontend/`](/home/jay/projs/mlir_start/legacy_python_frontend)
+- 本次移动的脚本包括：
+  - [`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py)
+  - [`top_canonicalize.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_canonicalize.py)
+  - [`top_fuse.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_fuse.py)
+  - [`top_run.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_run.py)
+  - [`mini_ptq.py`](/home/jay/projs/mlir_start/legacy_python_frontend/mini_ptq.py)
+- 新增归档说明：
+  - [`legacy_python_frontend/README.md`](/home/jay/projs/mlir_start/legacy_python_frontend/README.md)
+
+### Documentation Updated
+
+- 已同步更新以下说明文档中的脚本入口与结构描述：
+  - [`README.md`](/home/jay/projs/mlir_start/README.md)
+  - [`docs/project_structure.md`](/home/jay/projs/mlir_start/docs/project_structure.md)
+  - [`docs/archive/week1_archived.md`](/home/jay/projs/mlir_start/docs/archive/week1_archived.md)
+  - [`legacy_python_frontend/model_transform.md`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.md)
+  - [`docs/notes/day4_calibration.md`](/home/jay/projs/mlir_start/docs/notes/day4_calibration.md)
+  - [`docs/notes/day5_quant_eval.md`](/home/jay/projs/mlir_start/docs/notes/day5_quant_eval.md)
+
+### Current Convention
+
+- 仓库顶层不再承载 Python 原型脚本入口。
+- Python 线现在是“归档的参考实现 / 行为 oracle”，统一从 `legacy_python_frontend/` 进入。
+- 新的编译器主线工作继续优先进入 [`mlir_native/`](/home/jay/projs/mlir_start/mlir_native)。
+
+### Direction Clarified
+
+- 进一步明确：停止继续优化这条线，不是因为它“用了 Python”，而是因为它主要采用“解析模型后拼接 `.mlir` 文本”的方式。
+- 当前更值得投入的方向，是在 [`mlir_native/`](/home/jay/projs/mlir_start/mlir_native) 中实现真正贴近 MLIR 体系的 importer、rewrite、pass 和 lowering。
+
+### Archive Renamed And Root Docs Cleaned
+
+- 将原来的 Python 归档线正式命名为：
+  - [`legacy_python_frontend/`](/home/jay/projs/mlir_start/legacy_python_frontend)
+- 这个名字用来强调两点：
+  - 它是历史阶段的 Python 前端原型
+  - 它不再作为当前项目主线继续扩展
+- 项目根目录的 Markdown 也同步收敛，只保留：
+  - [`README.md`](/home/jay/projs/mlir_start/README.md)
+  - [`log.md`](/home/jay/projs/mlir_start/log.md)
+- 原来的路线图与周计划文档已移入：
+  - [`docs/archive/roadmap_archived.md`](/home/jay/projs/mlir_start/docs/archive/roadmap_archived.md)
+  - [`docs/archive/week1_archived.md`](/home/jay/projs/mlir_start/docs/archive/week1_archived.md)
+
+## 2026-04-16
+
+### First IR-Object Importer Landed
+
+- 在 [`mlir_native/`](/home/jay/projs/mlir_start/mlir_native) 主线上新增了第一版基于 MLIR IR 对象的 importer：
+  - [`onnx_to_mini_top.py`](/home/jay/projs/mlir_start/mlir_native/python/onnx_to_mini_top.py)
+- 这版 importer 的目标不是再拼接 `.mlir` 文本，而是：
+  - 解析 ONNX
+  - 使用 `mlir.ir` + `Operation.create(...)`
+  - 直接在内存中构造 `mini_top` IR
+- 当前支持的 `yolov5s` 子集包括：
+  - `Conv`
+  - `Sigmoid`
+  - `Mul`
+  - `Add`
+  - `Concat`
+  - `MaxPool`
+  - `Resize`
+  - `Reshape`
+  - `Transpose`
+  - `Shape/Gather/Unsqueeze/Cast` 常量折叠
+
+### Native Dialect Expanded For Import
+
+- 为了让 importer 落到真正的 `mini_top` 方言，而不是继续输出未定义的文本 op，本次在 [`MiniTopOps.td`](/home/jay/projs/mlir_start/mlir_native/include/mlir_start/Dialect/MiniTop/IR/MiniTopOps.td) 中补充了：
+  - `mini_top.weight`
+  - `mini_top.add`
+  - `mini_top.concat`
+  - `mini_top.maxpool`
+  - `mini_top.interp`
+- 原生子工程已经重新编译通过：
+  - [`mini-top-opt`](/home/jay/projs/mlir_start/mlir_native/build/bin/mini-top-opt)
+
+### Environment Note
+
+- 当前默认 `python3` 和 `llama` 环境里都还没有可直接使用的 `mlir.ir` Python bindings。
+- 因此这版 importer 目前已经：
+  - 完成源码实现
+  - 通过 Python 语法检查
+  - 与 native dialect 对齐
+- 但还需要补上 LLVM/MLIR Python 绑定环境后，才能实际执行 `yolov5s.onnx -> mini_top MLIR` 的端到端验证。

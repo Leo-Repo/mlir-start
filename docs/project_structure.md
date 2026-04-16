@@ -4,20 +4,25 @@
 
 这个仓库现在实际上已经分成两条实现线，也可以理解成两个子项目：
 
-1. Python 原型线  
-2. MLIR 原生线
+1. `legacy_python_frontend/` 归档参考线  
+2. `mlir_native/` 原生主线
 
-这两条线的目标不再相同，后续也不应该继续混着扩。
+这两条线的目标已经不同，后续也不应该继续混着扩。
 
-## 子项目 1：Python 原型线
+## 子项目 1：`legacy_python_frontend/`
 
-位于仓库根目录的一组脚本：
+已归档到：
 
-- [`model_transform.py`](/home/jay/projs/mlir_start/model_transform.py)
-- [`top_canonicalize.py`](/home/jay/projs/mlir_start/top_canonicalize.py)
-- [`top_fuse.py`](/home/jay/projs/mlir_start/top_fuse.py)
-- [`top_run.py`](/home/jay/projs/mlir_start/top_run.py)
-- [`mini_ptq.py`](/home/jay/projs/mlir_start/mini_ptq.py)
+- [`legacy_python_frontend/`](/home/jay/projs/mlir_start/legacy_python_frontend)
+
+其中主要脚本包括：
+
+- [`model_transform.py`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.py)
+- [`top_canonicalize.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_canonicalize.py)
+- [`top_fuse.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_fuse.py)
+- [`top_run.py`](/home/jay/projs/mlir_start/legacy_python_frontend/top_run.py)
+- [`mini_ptq.py`](/home/jay/projs/mlir_start/legacy_python_frontend/mini_ptq.py)
+- [`model_transform.md`](/home/jay/projs/mlir_start/legacy_python_frontend/model_transform.md)
 
 它们的定位是：
 
@@ -27,13 +32,15 @@
 
 后续策略：
 
-- 停止继续扩展 Python runtime 的功能范围
+- 停止继续扩展这条线的功能范围
 - 只保留：
   - bug 修复
   - 对照验证
   - 文档补充
 
-## 子项目 2：MLIR 原生线
+停止继续优化这条线的核心原因不是“它是 Python”，而是“它主要在拼 `.mlir` 文本”。这与 `tpu-mlir` 那种虽然用 Python 编写、但直接通过 `mlir.ir` 构造 IR 对象的前端不同。
+
+## 子项目 2：`mlir_native/`
 
 位于：
 
@@ -77,19 +84,19 @@
 
 从现在开始，项目主线应切换为：
 
-1. Python 线冻结为参考实现
+1. `legacy_python_frontend/` 冻结为参考实现
 2. 新功能优先落到 [`mlir_native/`](/home/jay/projs/mlir_start/mlir_native)
 3. 优先扩展：
    - rewrite
    - lowering
    - dialect 设计
-4. runtime 相关工作暂时不继续扩张 Python 版本
+4. runtime 相关工作不再继续扩张归档线版本
 
 ## 当前目录建议理解方式
 
 ```text
 mlir_start/
-  *.py                    # Python 原型与参考实现
+  legacy_python_frontend/ # Python 文本前端与实验脚手架（已归档）
   mlir_native/            # 原生 MLIR/LLVM 子工程
   experiments/            # 产物与实验输出
   docs/                   # 文档与阶段笔记

@@ -12,12 +12,12 @@
 
 脚本：
 
-- [`mini_ptq.py`](/home/jay/projs/mlir_start/mini_ptq.py)
+- [`mini_ptq.py`](/home/jay/projs/mlir_start/legacy_python_frontend/mini_ptq.py)
 
 命令：
 
 ```bash
-python mini_ptq.py --mode all --calib-num 100 --eval-num 10
+python legacy_python_frontend/mini_ptq.py --mode all --calib-num 100 --eval-num 10
 ```
 
 输出文件：
