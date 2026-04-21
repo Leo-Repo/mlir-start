@@ -28,6 +28,7 @@ DEFAULT_WORKDIR = REPO_ROOT / "experiments" / "04_mini_top_import"
 DEFAULT_MLIR = "yolov5s_mini_top.mlir"
 DEFAULT_WEIGHT = "yolov5s_mini_top_weights.npz"
 DEFAULT_OUTPUTS = "350,498,646"
+DEFAULT_INPUT_SHAPE = "1,3,640,640"
 
 
 def import_onnx():
@@ -60,9 +61,19 @@ def import_mlir():
         )
         from mlir.dialects import func
     except Exception as exc:  # pragma: no cover - environment dependent
+        detail = repr(exc)
+        extra_hint = ""
+        if "GLIBCXX_" in detail or "libstdc++.so.6" in detail:
+            extra_hint = (
+                "\nDetected a libstdc++ runtime mismatch while importing MLIR Python bindings.\n"
+                "Update the active environment's C++ runtime (for example `libstdcxx-ng`) "
+                "or run with a Python environment whose `libstdc++.so.6` already provides "
+                "the required GLIBCXX symbol."
+            )
         raise SystemExit(
             "This importer requires MLIR Python bindings (`mlir.ir`). "
-            "Build or activate an LLVM/MLIR Python environment first."
+            "Build or activate an LLVM/MLIR Python environment first.\n"
+            f"Import failure: {detail}{extra_hint}"
         ) from exc
     return {
         "ArrayAttr": ArrayAttr,
@@ -89,6 +100,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workdir", type=Path, default=DEFAULT_WORKDIR)
     parser.add_argument("--mlir", default=DEFAULT_MLIR)
     parser.add_argument("--weight-file", default=DEFAULT_WEIGHT)
+    parser.add_argument(
+        "--input-shape",
+        default=DEFAULT_INPUT_SHAPE,
+        help="Static input shape override in N,C,H,W form for the model input.",
+    )
     parser.add_argument(
         "--output-names",
         default=DEFAULT_OUTPUTS,
@@ -117,6 +133,16 @@ def mlir_elem_type(dtype: np.dtype) -> str:
     if dtype == np.bool_:
         return "i1"
     raise SystemExit(f"Unsupported dtype for mini_top importer: {dtype}")
+
+
+def parse_shape_csv(raw: str) -> list[int]:
+    values = [part.strip() for part in raw.split(",") if part.strip()]
+    if not values:
+        raise SystemExit("`--input-shape` must not be empty.")
+    try:
+        return [int(v) for v in values]
+    except ValueError as exc:
+        raise SystemExit(f"Invalid --input-shape `{raw}`. Expected comma-separated integers.") from exc
 
 
 def tensor_type_str(shape: list[int] | None, dtype: np.dtype = np.float32) -> str:
@@ -192,6 +218,7 @@ class MlirValue:
 class OnnxToMiniTopImporter:
     def __init__(self, args: argparse.Namespace):
         self.args = args
+        self.input_shape_override = parse_shape_csv(args.input_shape)
         onnx, tensor_proto, numpy_helper, shape_inference = import_onnx()
         self.onnx = onnx
         self.tensor_proto = tensor_proto
@@ -237,6 +264,10 @@ class OnnxToMiniTopImporter:
         for node in self.graph.node:
             for out in node.output:
                 self.producer_of[out] = node
+        graph_inputs = [value for value in self.graph.input if value.name not in self.initializer_names]
+        if len(graph_inputs) == 1:
+            inp = graph_inputs[0]
+            self.value_shapes[inp.name] = list(self.input_shape_override)
 
     def _resolve_output_names(self, raw: str) -> list[str]:
         if raw.strip():
@@ -329,6 +360,9 @@ class OnnxToMiniTopImporter:
             return self.values[name]
         if name in self.initializers:
             return self.materialize_weight(name, self.initializers[name])
+        const = self.constant_array(name)
+        if const is not None:
+            return self.materialize_weight(name, const)
         raise KeyError(f"Unknown operand: {name}")
 
     def materialize_weight(self, key: str, array: np.ndarray) -> MlirValue:

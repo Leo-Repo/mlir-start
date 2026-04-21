@@ -138,6 +138,38 @@ graph IR" style used by real compiler frontends.
 Note:
 
 - this script requires both `onnx` and upstream MLIR Python bindings
-- the current workspace build does not yet provide those bindings by default
-- so the script is checked in, syntax-checked, and ready to use once the MLIR
-  Python environment is available
+- the current workspace does not install those bindings into the conda env by default
+- use the wrapper scripts below to pin `PYTHONPATH` consistently
+
+## Running The Importer
+
+After building LLVM with MLIR Python bindings in `build-py`, use the wrapper:
+
+```bash
+/home/jay/projs/mlir_start/mlir_native/scripts/run_onnx_to_mini_top.sh --dump-summary
+```
+
+This wrapper currently does one important thing for the `llama` conda environment:
+
+- exports `PYTHONPATH=/home/jay/projs/llvm-project/build-py/tools/mlir/python_packages/mlir_core`
+
+If you want a more generic entrypoint for ad-hoc commands:
+
+```bash
+/home/jay/projs/mlir_start/mlir_native/scripts/with_mlir_python_env.sh \
+  /home/jay/miniconda3/envs/llama/bin/python -c "from mlir.ir import Context; print('ok')"
+```
+
+## Debugging
+
+Yes, debugging can still link against the right libraries, but the debugger must
+launch Python through the same wrapper or inherit the same environment.
+
+Two stable options:
+
+- launch the debugger against [`scripts/run_onnx_to_mini_top.sh`](/home/jay/projs/mlir_start/mlir_native/scripts/run_onnx_to_mini_top.sh)
+- or add the same `PYTHONPATH` value to your IDE's debug configuration
+
+If the debugger launches `python` directly without those environment variables,
+it may fail during `from mlir.ir import ...` because the MLIR Python package
+directory is not on `PYTHONPATH`.
