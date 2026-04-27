@@ -521,6 +521,43 @@
   - Python 原型适合快速试规则
   - 一旦进入原生链路，就必须真正理解 ODS、生成代码和 MLIR 版本接口的关系
 
+## 2026-04-25
+
+### Native Runner / Quant / GPU Bring-Up
+
+- 扩展 `mini_top` dialect：
+  - `mini_top.conv` 现在携带 `strides / pads / dilations / group`
+  - 新增 `mini_top.conv_silu`
+  - 新增 `mini_top.quantize / dequantize / qconv / qconv_silu`
+- 新增 native pass：
+  - `--mini-top-fuse-conv-silu`
+  - `--mini-top-insert-int8-quant`
+  - `--mini-top-lower-conv-silu-to-gpu`
+- `--mini-top-insert-int8-quant` 已支持从 `mini-top-run` 生成的 calibration JSON 中读取 `absmax`，第一版先生成保守 global scale。
+- 新增 C++ runner：
+  - `mlir_native/build/bin/mini-top-run`
+  - 支持 `.npy` 输入、`.npy` 权重目录、FP32 全图 reference、Q/DQ 量化 IR 执行、calibration JSON 输出。
+- `onnx_to_mini_top.py` 新增 `--weight-format npz|npy-dir|both`，默认同步导出 `weights_npy/` 供 C++ runner 使用。
+- 新增 `prepare_npy_inputs.py`，用于把已有 `.npz` tensor 输入转换成 runner 使用的 `.npy + inputs.txt`。
+- 新增 CUDA fused conv+silu kernel 示例：
+  - `mlir_native/cuda/conv_silu_kernel.cu`
+  - `mlir_native/scripts/build_cuda_kernels.sh`
+- 已验证：
+  - native build 通过
+  - `conv -> sigmoid -> mul -> conv_silu` pass 小样通过
+  - `conv_silu -> quantize/qconv_silu/dequantize` 小样通过
+  - GPU lowering candidate marker 小样通过
+  - CUDA kernel object 编译通过
+  - `mini-top-run` 小型 `conv_silu` run/calibrate/quantized run 冒烟通过
+  - YOLOv5 native importer 重新生成 `experiments/01_mini_top_import/yolov5s_mini_top.mlir`
+  - YOLOv5 pass pipeline 生成 `yolov5s_mini_top_after_passes.mlir`，包含 `57` 个 `conv_silu` / GPU candidate marker
+
+### Current Limitations
+
+- C++ runner 当前是朴素 CPU reference，完整 YOLOv5 可以作为 correctness path，但不适合作为性能路径。
+- `--mini-top-lower-conv-silu-to-gpu` 第一版先标记 GPU lowering candidate，尚未生成完整 `gpu.launch -> nvvm` 可执行链路。
+- 量化 pass 当前从 calibration table 生成 global scale；后续应升级为按稳定 tensor key / loc 做 per-op activation scale 映射。
+
 
 ## Working Agreement
 

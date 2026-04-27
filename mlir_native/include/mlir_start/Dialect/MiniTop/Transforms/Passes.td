@@ -55,4 +55,47 @@ def MiniTopLowerActivations : Pass<"mini-top-lower-activations", "mlir::func::Fu
   ];
 }
 
+def MiniTopFuseConvSiLU : Pass<"mini-top-fuse-conv-silu", "mlir::func::FuncOp"> {
+  let summary = "Fuse mini_top.conv feeding mini_top.silu into mini_top.conv_silu";
+  let description = [{
+    Models the first hardware-oriented fused layer boundary for this project.
+    The pass expects the existing SiLU pass to have already rewritten
+    sigmoid/mul patterns, but it also naturally handles importer-emitted
+    conv -> silu patterns.
+  }];
+  let constructor = "mlir::mlir_start::mini_top::createFuseConvSiLUPass()";
+}
+
+def MiniTopInsertInt8Quant : Pass<"mini-top-insert-int8-quant", "mlir::func::FuncOp"> {
+  let summary = "Insert first-cut symmetric int8 quantization markers";
+  let description = [{
+    Rewrites mini_top.conv_silu into quantize -> qconv_silu -> dequantize.
+    Calibration table parsing is intentionally kept out of this first native
+    skeleton; the pass exposes scale options so generated IR has the final
+    quantized shape and can be executed by mini-top-run.
+  }];
+  let constructor = "mlir::mlir_start::mini_top::createInsertInt8QuantPass()";
+  let options = [
+    Option<"inputScale", "input-scale", "double", /*default=*/"1.0",
+           "Activation scale to attach to inserted quantize/qconv_silu ops">,
+    Option<"outputScale", "output-scale", "double", /*default=*/"1.0",
+           "Output scale to attach to qconv_silu/dequantize ops">,
+    Option<"calibrationTable", "calibration-table", "std::string", /*default=*/"\"\"",
+           "Optional mini-top-run calibration JSON; first version derives a conservative global scale from absmax values">
+  ];
+}
+
+def MiniTopLowerConvSiLUToGPU : Pass<"mini-top-lower-conv-silu-to-gpu", "mlir::func::FuncOp"> {
+  let summary = "Mark conv_silu ops with a GPU lowering demonstration op";
+  let description = [{
+    First GPU lowering demonstration. It creates a gpu.launch_func-compatible
+    marker region around conv_silu/qconv_silu candidates without attempting a
+    full executable binary pipeline.
+  }];
+  let constructor = "mlir::mlir_start::mini_top::createLowerConvSiLUToGPUPass()";
+  let dependentDialects = [
+    "mlir::gpu::GPUDialect"
+  ];
+}
+
 #endif

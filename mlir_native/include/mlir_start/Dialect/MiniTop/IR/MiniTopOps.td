@@ -23,7 +23,30 @@ def MiniTop_WeightOp : MiniTop_Op<"weight"> {
 
 def MiniTop_ConvOp : MiniTop_Op<"conv"> {
   let summary = "Minimal convolution placeholder op";
-  let arguments = (ins AnyTensor:$input, AnyTensor:$filter, AnyTensor:$bias);
+  let arguments = (ins
+    AnyTensor:$input,
+    AnyTensor:$filter,
+    AnyTensor:$bias,
+    OptionalAttr<ArrayAttr>:$strides,
+    OptionalAttr<ArrayAttr>:$pads,
+    OptionalAttr<ArrayAttr>:$dilations,
+    OptionalAttr<I64Attr>:$group
+  );
+  let results = (outs AnyTensor:$output);
+  let assemblyFormat = "$input `,` $filter `,` $bias attr-dict `:` type($input) `,` type($filter) `,` type($bias) `->` type($output)";
+}
+
+def MiniTop_ConvSiLUOp : MiniTop_Op<"conv_silu"> {
+  let summary = "Fused convolution plus SiLU activation";
+  let arguments = (ins
+    AnyTensor:$input,
+    AnyTensor:$filter,
+    AnyTensor:$bias,
+    OptionalAttr<ArrayAttr>:$strides,
+    OptionalAttr<ArrayAttr>:$pads,
+    OptionalAttr<ArrayAttr>:$dilations,
+    OptionalAttr<I64Attr>:$group
+  );
   let results = (outs AnyTensor:$output);
   let assemblyFormat = "$input `,` $filter `,` $bias attr-dict `:` type($input) `,` type($filter) `,` type($bias) `->` type($output)";
 }
@@ -90,6 +113,56 @@ def MiniTop_InterpOp : MiniTop_Op<"interp"> {
   let summary = "Minimal interpolation op";
   let arguments = (ins AnyTensor:$input, I64Attr:$target_h, I64Attr:$target_w, StrAttr:$mode);
   let results = (outs AnyTensor:$output);
+}
+
+def MiniTop_QuantizeOp : MiniTop_Op<"quantize"> {
+  let summary = "Symmetric int8 quantize marker";
+  let arguments = (ins AnyTensor:$input, F64Attr:$scale);
+  let results = (outs AnyTensor:$output);
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($output)";
+}
+
+def MiniTop_DequantizeOp : MiniTop_Op<"dequantize"> {
+  let summary = "Symmetric int8 dequantize marker";
+  let arguments = (ins AnyTensor:$input, F64Attr:$scale);
+  let results = (outs AnyTensor:$output);
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($output)";
+}
+
+def MiniTop_QConvOp : MiniTop_Op<"qconv"> {
+  let summary = "Quantized convolution placeholder op";
+  let arguments = (ins
+    AnyTensor:$input,
+    AnyTensor:$filter,
+    AnyTensor:$bias,
+    AnyTensor:$weight_scale,
+    F64Attr:$input_scale,
+    F64Attr:$output_scale,
+    OptionalAttr<ArrayAttr>:$strides,
+    OptionalAttr<ArrayAttr>:$pads,
+    OptionalAttr<ArrayAttr>:$dilations,
+    OptionalAttr<I64Attr>:$group
+  );
+  let results = (outs AnyTensor:$output);
+  let assemblyFormat = "$input `,` $filter `,` $bias `,` $weight_scale attr-dict `:` type($input) `,` type($filter) `,` type($bias) `,` type($weight_scale) `->` type($output)";
+}
+
+def MiniTop_QConvSiLUOp : MiniTop_Op<"qconv_silu"> {
+  let summary = "Quantized fused convolution plus SiLU placeholder op";
+  let arguments = (ins
+    AnyTensor:$input,
+    AnyTensor:$filter,
+    AnyTensor:$bias,
+    AnyTensor:$weight_scale,
+    F64Attr:$input_scale,
+    F64Attr:$output_scale,
+    OptionalAttr<ArrayAttr>:$strides,
+    OptionalAttr<ArrayAttr>:$pads,
+    OptionalAttr<ArrayAttr>:$dilations,
+    OptionalAttr<I64Attr>:$group
+  );
+  let results = (outs AnyTensor:$output);
+  let assemblyFormat = "$input `,` $filter `,` $bias `,` $weight_scale attr-dict `:` type($input) `,` type($filter) `,` type($bias) `,` type($weight_scale) `->` type($output)";
 }
 
 #endif

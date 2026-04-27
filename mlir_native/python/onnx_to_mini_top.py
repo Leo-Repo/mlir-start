@@ -24,7 +24,7 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = REPO_ROOT / "models" / "yolov5s.onnx"
-DEFAULT_WORKDIR = REPO_ROOT / "experiments" / "04_mini_top_import"
+DEFAULT_WORKDIR = REPO_ROOT / "experiments" / "01_mini_top_import"
 DEFAULT_MLIR = "yolov5s_mini_top.mlir"
 DEFAULT_WEIGHT = "yolov5s_mini_top_weights.npz"
 DEFAULT_OUTPUTS = "350,498,646"
@@ -100,6 +100,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workdir", type=Path, default=DEFAULT_WORKDIR)
     parser.add_argument("--mlir", default=DEFAULT_MLIR)
     parser.add_argument("--weight-file", default=DEFAULT_WEIGHT)
+    parser.add_argument(
+        "--weight-format",
+        choices=["npz", "npy-dir", "both"],
+        default="both",
+        help="Weight dump format. npy-dir writes one .npy per weight for the C++ runner.",
+    )
     parser.add_argument(
         "--input-shape",
         default=DEFAULT_INPUT_SHAPE,
@@ -608,7 +614,12 @@ class OnnxToMiniTopImporter:
             "mini_top.conv",
             [out_shape],
             [data.value, weight.value, bias.value],
-            {},
+            {
+                "strides": self.array_i64_attr(strides),
+                "pads": self.array_i64_attr(pads),
+                "dilations": self.array_i64_attr(dilations),
+                "group": self.i64_attr(int(attrs.get("group", 1))),
+            },
             [data.dtype],
             loc_name=self.node_loc_name(node),
         )[0]
@@ -837,7 +848,13 @@ class OnnxToMiniTopImporter:
         mlir_path = self.args.workdir / self.args.mlir
         weight_path = self.args.workdir / self.args.weight_file
         mlir_path.write_text(mlir_text)
-        np.savez(weight_path, **self.weight_arrays)
+        if self.args.weight_format in {"npz", "both"}:
+            np.savez(weight_path, **self.weight_arrays)
+        if self.args.weight_format in {"npy-dir", "both"}:
+            weight_dir = self.args.workdir / "weights_npy"
+            weight_dir.mkdir(parents=True, exist_ok=True)
+            for key, array in self.weight_arrays.items():
+                np.save(weight_dir / f"{key}.npy", array)
         return mlir_text, mlir_path
 
 
